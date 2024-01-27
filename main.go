@@ -195,6 +195,11 @@ func sendICMPEchoRequest(ip string) {
 
 // Function to finalize the program and write results
 func writeResults() {
+	// Lock the mutex before reading from the map
+	// can happen when we are still writing to the map
+	mutex.Lock()
+	defer mutex.Unlock()
+
 	// Convert map keys (integers) to a slice and sort
 	var keys []uint32
 	for k := range respondingIPs {
