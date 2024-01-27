@@ -2,7 +2,7 @@
 
 ## Description
 
-This Go program is designed to identify active (ICMP responsive) EC2 instances in AWS. It fetches the current IP ranges allocated for EC2 services from AWS, sends ICMP Echo Requests to these IPs, and records the IPs that respond. This utility is particularly useful to find responsiveness of EC2 instances.
+This Go program is designed to identify active (ICMP responsive) EC2 instances in AWS. It fetches the current IP ranges allocated for EC2 services from AWS, sends ICMP Echo Requests to these IPs, and records the IPs that respond. This utility is particularly useful for finding EC2 instances that reply to ICMP pings
 
 ## Key Features
 
@@ -26,7 +26,7 @@ To run this program, follow these steps:
 
 3. **Running the Program**:
    - Compile the program using `go build -o ping-aws-ips`.
-   - Run the compiled binary. For example: `./aws-ec2-icmp-ping`.
+   - Run the compiled binary. For example: `./ping-aws-ips`.
 
 4. **Output**:
    - The program will print the responding IPs to a file named `ping_results_<timestamp>.txt`.
@@ -37,4 +37,4 @@ To run this program, follow these steps:
 
 ## Note
 
-This utility is intended for monitoring purposes, not to abuse! Please use responsibly.
+This utility is intended for monitoring purposes, not to abuse! Please use it responsibly.
