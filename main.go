@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"math/rand"
 	"net"
 	"net/http"
@@ -20,7 +20,7 @@ import (
 
 var (
 	// rate limit is the number of ICMP Echo Requests we send per second
-	ratelimit = 20000 // Rate limiter: 20000 per second
+	ratelimit = 1000 // Rate limiter: pps per second
 	// awsIpRangesUrl is the URL to download the AWS IP ranges JSON
 	awsIpRangesUrl = "https://ip-ranges.amazonaws.com/ip-ranges.json"
 
@@ -59,7 +59,7 @@ func fetchIPData(url string) (IPData, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return data, err
 	}
