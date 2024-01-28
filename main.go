@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/signal"
 	"sort"
-	"sync"
 	"syscall"
 	"time"
 
@@ -27,8 +26,7 @@ var (
 
 	// map to store responding IPs
 	respondingIPs = make(map[uint32]string)
-	// lock to use when updating the respondingIPs map
-	mutex sync.Mutex
+	stopUpdating  = make(chan struct{})
 )
 
 // Define JSON structures
@@ -78,31 +76,34 @@ func listenPingForReplies() {
 
 	packet := make([]byte, 1500)
 	for {
-		n, src, err := conn.ReadFrom(packet)
-		if err != nil {
-			fmt.Println("Error:", err)
-			continue
-		}
-
-		message, err := icmp.ParseMessage(1, packet[:n])
-		if err != nil {
-			fmt.Println("Error:", err)
-			continue
-		}
-
-		switch message.Type {
-		case ipv4.ICMPTypeEchoReply:
-			_, ok := message.Body.(*icmp.Echo)
-			if !ok {
-				fmt.Println("Got bad Echo Reply message")
+		select {
+		case <-stopUpdating:
+			return
+		default:
+			n, src, err := conn.ReadFrom(packet)
+			if err != nil {
+				fmt.Println("Error:", err)
 				continue
 			}
 
-			// Add responding IP to the map
-			ipInt := ipToUint32(src.String())
-			mutex.Lock()
-			respondingIPs[ipInt] = src.String()
-			mutex.Unlock()
+			message, err := icmp.ParseMessage(1, packet[:n])
+			if err != nil {
+				fmt.Println("Error:", err)
+				continue
+			}
+
+			switch message.Type {
+			case ipv4.ICMPTypeEchoReply:
+				_, ok := message.Body.(*icmp.Echo)
+				if !ok {
+					fmt.Println("Got bad Echo Reply message")
+					continue
+				}
+
+				// Add responding IP to the map
+				ipInt := ipToUint32(src.String())
+				respondingIPs[ipInt] = src.String()
+			}
 		}
 	}
 }
@@ -195,11 +196,6 @@ func sendICMPEchoRequest(ip string) {
 
 // Function to finalize the program and write results
 func writeResults() {
-	// Lock the mutex before reading from the map
-	// can happen when we are still writing to the map
-	mutex.Lock()
-	defer mutex.Unlock()
-
 	// Convert map keys (integers) to a slice and sort
 	var keys []uint32
 	for k := range respondingIPs {
@@ -244,7 +240,13 @@ func main() {
 
 	go func() {
 		<-sigs
+		// Since we don't use mutex locks.
+		// We need to stop updating the map before printing the results
+		close(stopUpdating) // Signal to stop updating the map
 		fmt.Println("\nInterrupt received, writing results...")
+		// Just a little delay to make sure nothing is writing to the map
+		time.Sleep(10 * time.Millisecond)
+		// now we can print the results
 		writeResults()
 		os.Exit(0)
 	}()
