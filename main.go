@@ -30,6 +30,9 @@ var (
 	// channel to signal to stop updating the map and return
 	// Needed so we don't have to use mutex locks to prevent multiple goroutines from writing to the map at the same time
 	stopUpdating = make(chan struct{})
+
+	// icmpEchoRequestTemplate is the ICMP Echo Request packet template
+	icmpEchoRequestTemplate []byte
 )
 
 // Define JSON structures
@@ -66,6 +69,23 @@ func fetchIPData(url string) (IPData, error) {
 	}
 
 	return data, nil
+}
+
+func buildPingPacket() {
+	icmpEchoRequestTemplate = make([]byte, 8)
+	icmpEchoRequestTemplate[0] = 8                             // Echo Request type
+	icmpEchoRequestTemplate[1] = 0                             // Code 0
+	binary.BigEndian.PutUint16(icmpEchoRequestTemplate[6:], 1) // Identifier
+
+	// Calculate ICMP checksum
+
+	var sum uint32
+	for i := 0; i < len(icmpEchoRequestTemplate); i += 2 {
+		sum += uint32(icmpEchoRequestTemplate[i])<<8 | uint32(icmpEchoRequestTemplate[i+1])
+	}
+	sum += (sum >> 16)
+	checksum := ^uint16(sum)
+	binary.BigEndian.PutUint16(icmpEchoRequestTemplate[2:], checksum)
 }
 
 // Function to listen for ICMP Echo Replies
@@ -174,24 +194,8 @@ func sendICMPEchoRequest(ip string) {
 	}
 	defer conn.Close()
 
-	// ICMP Echo Request header
-	header := make([]byte, 8)
-	header[0] = 8                             // Echo Request type
-	header[1] = 0                             // Code 0
-	binary.BigEndian.PutUint16(header[6:], 1) // Identifier
-
-	// Calculate ICMP checksum
-	var sum uint32
-	for i := 0; i < len(header); i += 2 {
-		sum += uint32(header[i])<<8 | uint32(header[i+1])
-	}
-	sum += (sum >> 16)
-	checksum := ^uint16(sum)
-
-	binary.BigEndian.PutUint16(header[2:], checksum)
-
-	// Send ICMP Echo Request
-	_, err = conn.Write(header)
+	// Use the ping template
+	_, err = conn.Write(icmpEchoRequestTemplate)
 	if err != nil {
 		fmt.Println("Error:", err)
 	}
@@ -235,6 +239,9 @@ func main() {
 		fmt.Println("Error:", err)
 		return
 	}
+
+	// Build the ICMP packet template, so we don't have to build it for every IP
+	buildPingPacket()
 
 	// Setting up signal handling
 	sigs := make(chan os.Signal, 1)
