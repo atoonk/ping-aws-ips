@@ -26,7 +26,10 @@ var (
 
 	// map to store responding IPs
 	respondingIPs = make(map[uint32]string)
-	stopUpdating  = make(chan struct{})
+
+	// channel to signal to stop updating the map and return
+	// Needed so we don't have to use mutex locks to prevent multiple goroutines from writing to the map at the same time
+	stopUpdating = make(chan struct{})
 )
 
 // Define JSON structures
