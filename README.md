@@ -14,6 +14,10 @@ This utility showcases the power of asynchronous operations in network programmi
 - **Results Logging**: The IPs that respond are logged into a file, providing a record of all active instances detected during the program's run.
 - **IP Shuffling**: The code randomizes the order of IP addresses before sending ICMP requests. This shuffling helps with Load Distribution: It prevents network load spikes by evenly distributing requests across different network segments or servers. Randomizing the order helps avoid patterns that might be flagged by various systems.
 
+## ICMP and firewalls
+Remember that many ec2 instances and other services will have strict security groups and, by default, won't respond to a ping packet. 
+As a result, the final number reported by this program is just a subset of the actual number of alive EC2 instances. 
+
 ## How to Run
 
 To run this program, follow these steps:
