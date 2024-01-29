@@ -21,8 +21,8 @@ import (
 var (
 	// rate limit is the number of ICMP Echo Requests we send per second
 	ratelimit = 1000 // Rate limiter: pps per second
-	// awsIpRangesUrl is the URL to download the AWS IP ranges JSON
-	awsIpRangesUrl = "https://ip-ranges.amazonaws.com/ip-ranges.json"
+	// awsIPRangesURL is the URL to download the AWS IP ranges JSON
+	awsIPRangesURL = "https://ip-ranges.amazonaws.com/ip-ranges.json"
 
 	// map to store responding IPs
 	respondingIPs = make(map[uint32]string)
@@ -33,6 +33,9 @@ var (
 
 	// icmpEchoRequestTemplate is the ICMP Echo Request packet template
 	icmpEchoRequestTemplate []byte
+
+	// rawSocketFd is the raw socket file descriptor
+	rawSocketFd int
 )
 
 // Define JSON structures
@@ -185,22 +188,6 @@ func humanizeNumber(num int64) string {
 	return fmt.Sprintf("%s,%03d", humanizeNumber(num/1000), num%1000)
 }
 
-// Function to send an ICMP Echo Request to an IP address
-func sendICMPEchoRequest(ip string) {
-	conn, err := net.Dial("ip4:icmp", ip)
-	if err != nil {
-		fmt.Println("Error:", err)
-		return
-	}
-	defer conn.Close()
-
-	// Use the ping template
-	_, err = conn.Write(icmpEchoRequestTemplate)
-	if err != nil {
-		fmt.Println("Error:", err)
-	}
-}
-
 // Function to finalize the program and write results
 func writeResults() {
 	// Convert map keys (integers) to a slice and sort
@@ -231,63 +218,133 @@ func writeResults() {
 	fmt.Println("Results written to", filename)
 }
 
+// Function to initialize the raw socket
+func initRawSocket() error {
+	var err error
+	rawSocketFd, err = syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_ICMP)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// Function to send an ICMP Echo Request using raw sockets
+// this is the fastest way to send ICMP Echo Requests, since we don't need to a new dial for each request
+func sendICMPEchoRequest(ip string) {
+	ipAddr := net.ParseIP(ip)
+	if ipAddr == nil {
+		fmt.Printf("Invalid IP address: %s\n", ip)
+		return
+	}
+
+	var addr [4]byte
+	copy(addr[:], ipAddr.To4())
+
+	dest := syscall.SockaddrInet4{
+		Addr: addr,
+	}
+
+	if err := syscall.Sendto(rawSocketFd, icmpEchoRequestTemplate, 0, &dest); err != nil {
+		fmt.Printf("Error sending to %s: %v\n", ip, err)
+	}
+}
+
+// Takes a list of IPs and sends ICMP Echo Requests to them at a rate of ratelimit per second
+func pingTargets(expandedIps []string) {
+
+	// inteval is the number of milliseconds between each interval
+	// in this case we check the sending rate every 10 milliseconds (100 times per second)
+	interval := 10
+
+	// ley's calculate the number of packets we need to send per interval
+	targetPacketsPerInterval := ratelimit / (1000 / interval)
+
+	// Setup ticker for packet sending
+	ticker := time.NewTicker(time.Duration(interval) * time.Millisecond)
+	defer ticker.Stop()
+
+	// now shuffle the IPs to randomize the order
+	rand.Shuffle(len(expandedIps), func(i, j int) { expandedIps[i], expandedIps[j] = expandedIps[j], expandedIps[i] })
+
+	ipIndex := 0
+	for range ticker.C {
+		select {
+		case <-stopUpdating:
+			// no more sending packets, user wants to exit
+			return
+		default:
+			packetsThisInterval := 0
+
+			for ipIndex < len(expandedIps) && packetsThisInterval < targetPacketsPerInterval {
+				ipAddress := expandedIps[ipIndex]
+				go sendICMPEchoRequest(ipAddress)
+				packetsThisInterval++
+				ipIndex++
+			}
+			if ipIndex >= len(expandedIps) {
+				return
+			}
+		}
+	}
+}
+
 // Main function
 func main() {
-
-	data, err := fetchIPData(awsIpRangesUrl)
+	// Fetch the IP data
+	data, err := fetchIPData(awsIPRangesURL)
 	if err != nil {
 		fmt.Println("Error:", err)
 		return
 	}
 
-	// Build the ICMP packet template, so we don't have to build it for every IP
-	buildPingPacket()
-
-	// Setting up signal handling
+	// Signal handling for graceful shutdown
 	sigs := make(chan os.Signal, 1)
-
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
-
 	go func() {
 		<-sigs
-		// Since we don't use mutex locks.
-		// We need to stop updating the map before printing the results
-		close(stopUpdating) // Signal to stop updating the map
 		fmt.Println("\nInterrupt received, writing results...")
+		close(stopUpdating) // Signal to stop updating the map
 		// Just a little delay to make sure nothing is writing to the map
 		time.Sleep(10 * time.Millisecond)
-		// now we can print the results
 		writeResults()
-		os.Exit(0)
+		os.Exit(0) // Exit the program after writing results
 	}()
 
-	go listenPingForReplies() // Start listening for ICMP Echo Replies
+	// Start listening for ICMP Echo Replies
+	go listenPingForReplies()
+
+	// Initialize the raw socket
+	// Raw sockets are the fastest way to send ICMP Echo Requests in our case
+	// as using a raw socket we don't need to dial for each request
+	err = initRawSocket()
+	if err != nil {
+		fmt.Println("Error initializing raw socket:", err)
+		fmt.Println("Make sure you run this program as root")
+		return
+	}
+
+	// Build the ICMP packet template
+	buildPingPacket()
 
 	for _, prefix := range data.Prefixes {
 		if prefix.Service == "AMAZON" || prefix.Service == "EC2" || prefix.Service == "GLOBALACCELERATOR" {
-			fmt.Printf("%s - %s - %s - %s\n", prefix.IPPrefix, prefix.Region, prefix.NetworkBorderGroup, prefix.Service)
 			expandedIps, err := expandCIDR(prefix.IPPrefix)
 			if err != nil {
 				fmt.Println("Error expanding CIDR:", err)
 				continue
 			}
-			rate := time.Second / time.Duration(ratelimit)
-			throttle := time.Tick(rate)
-
-			// Shuffle IPs to randomize the order
-			rand.Seed(time.Now().UnixNano())
+			// now shuffle the IPs to randomize the order
 			rand.Shuffle(len(expandedIps), func(i, j int) { expandedIps[i], expandedIps[j] = expandedIps[j], expandedIps[i] })
-			for _, ip := range expandedIps {
 
-				<-throttle // Wait for the next tick
-				go sendICMPEchoRequest(ip)
-			}
+			fmt.Println("Sending ICMP Echo Requests to", len(expandedIps), "IPs in", prefix.IPPrefix, prefix.Service, prefix.Region, prefix.NetworkBorderGroup)
+			pingTargets(expandedIps)
+
 		}
 	}
 
-	// Sleep for 5 seconds to allow for any delayed replies
+	// Sleep to allow for any delayed replies before exiting
 	time.Sleep(5 * time.Second)
 
-	// Normal completion:  write results
+	// Normal completion: write results
 	writeResults()
 }
