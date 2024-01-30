@@ -81,7 +81,6 @@ func buildPingPacket() {
 	binary.BigEndian.PutUint16(icmpEchoRequestTemplate[6:], 1) // Identifier
 
 	// Calculate ICMP checksum
-
 	var sum uint32
 	for i := 0; i < len(icmpEchoRequestTemplate); i += 2 {
 		sum += uint32(icmpEchoRequestTemplate[i])<<8 | uint32(icmpEchoRequestTemplate[i+1])
@@ -229,7 +228,8 @@ func initRawSocket() error {
 }
 
 // Function to send an ICMP Echo Request using raw sockets
-// this is the fastest way to send ICMP Echo Requests, since we don't need to a new dial for each request
+// this is the fastest way to send ICMP Echo Requests, since we don't need to do a new dial for each ping request
+// Instead we only use one file descriptor for the raw socket
 func sendICMPEchoRequest(ip string) {
 	ipAddr := net.ParseIP(ip)
 	if ipAddr == nil {
@@ -262,9 +262,6 @@ func pingTargets(expandedIps []string) {
 	// Setup ticker for packet sending
 	ticker := time.NewTicker(time.Duration(interval) * time.Millisecond)
 	defer ticker.Stop()
-
-	// now shuffle the IPs to randomize the order
-	rand.Shuffle(len(expandedIps), func(i, j int) { expandedIps[i], expandedIps[j] = expandedIps[j], expandedIps[i] })
 
 	ipIndex := 0
 	for range ticker.C {
@@ -334,6 +331,7 @@ func main() {
 				continue
 			}
 			// now shuffle the IPs to randomize the order
+			// This makes sure we don't hit all IPs in the same subnet at the same time
 			rand.Shuffle(len(expandedIps), func(i, j int) { expandedIps[i], expandedIps[j] = expandedIps[j], expandedIps[i] })
 
 			fmt.Println("Sending ICMP Echo Requests to", len(expandedIps), "IPs in", prefix.IPPrefix, prefix.Service, prefix.Region, prefix.NetworkBorderGroup)
